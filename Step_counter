@@ -1,0 +1,70 @@
+%% Walk Step Counter Using MATLAB Mobile Sensor Data
+clc; clear; close all;
+
+%% Load the Sensor Data
+load('sensorlog_20250327_080231.mat');
+
+%% Identify Time & Acceleration Variables Dynamically
+vars = whos;
+timeVar = ''; 
+accelVar = '';
+
+for i = 1:length(vars)
+    if contains(vars(i).name, 'time', 'IgnoreCase', true)
+        timeVar = vars(i).name;
+    elseif contains(vars(i).name, 'acc', 'IgnoreCase', true) || ...
+           contains(vars(i).name, 'acceler', 'IgnoreCase', true)
+        accelVar = vars(i).name;
+    end
+end
+
+%% Ensure Time & Acceleration Variables Exist Before Proceeding
+if ~isempty(timeVar)
+    time = evalin('base', timeVar);
+    if istimetable(time), time = time.Variables; end
+    if istable(time), time = table2array(time); end
+else
+    time = linspace(0, 10, size(evalin('base', accelVar), 1)); % Create synthetic time
+end
+
+if ~isempty(accelVar)
+    AccData = evalin('base', accelVar);
+    if istimetable(AccData), AccData = AccData.Variables; end
+    if istable(AccData), AccData = table2array(AccData); end
+else
+    AccData = zeros(length(time), 3); % Default to zero if missing
+end
+
+%% Extract Z-Axis Acceleration
+AccZ = AccData(:, 3);
+
+%% Remove Trend
+Detrended_signal = detrend(AccZ);
+
+%% Convert to Frequency Domain
+fs = 50;  
+[pxx, fxx] = pwelch(Detrended_signal, [], [], [], fs);
+
+%% Design & Apply Low-Pass Filter
+N  = 5;  
+Fc = 3;  
+h  = fdesign.lowpass('N,F3dB', N, Fc, fs);
+Hd = design(h, 'butter');
+Filtered_signal = filtfilt(Hd.sosMatrix, Hd.ScaleValues, Detrended_signal);
+
+%% Perform Filter Delay Compensation
+filter_output_nodelay = filtfilt(Hd.sosMatrix, Hd.ScaleValues, Detrended_signal);
+
+%% Step Detection
+[peaks, locs] = findpeaks(filter_output_nodelay, 'MinPeakHeight', 0.3, 'MinPeakDistance', 15);
+StepCount = length(locs);
+
+%% Display Step Count
+disp(['Total Steps Detected: ', num2str(StepCount)]);
+
+%% Visualize Step Detection
+plot(time, filter_output_nodelay, 'b'); hold on;
+plot(time(locs), peaks, 'ro', 'MarkerFaceColor', 'r'); grid on;
+legend('Filtered Signal', 'Detected Steps');
+xlabel('Time (s)'); ylabel('Acceleration (m/s²)');
+title(['Step Detection - Total Steps: ', num2str(StepCount)]);
